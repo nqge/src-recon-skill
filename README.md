@@ -30,10 +30,11 @@
 
 ## 🛠️ 工具清单
 
-### Python 工具（8 个）
+### Python 工具（9 个）
 
 | 工具 | 功能 | 并发 |
 |------|------|------|
+| **oneforall_subs.py** | OneForAll 子域名收集（30+ 方法） | - |
 | **fofa_subs.py** | FOFA 子域名收集 | 15 线程 |
 | **http_scanner.py** | HTTP/HTTPS 服务扫描 | 15 线程 |
 | **jsfind.py** | JavaScript 文件分析 | 15 线程 |
