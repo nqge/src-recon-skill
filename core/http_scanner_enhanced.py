@@ -351,8 +351,19 @@ def main():
 
     # 保存结果
     scanner.save_results(output_file)
-    scanner.save_ip_list(ips_file)
-    scanner.save_ip_mapping(mapping_file)
+    
+    # 保存 IP 文件到输出目录
+    import os
+    output_dir = os.path.dirname(output_file)
+    if output_dir:
+        ips_file_path = os.path.join(output_dir, os.path.basename(ips_file))
+        mapping_file_path = os.path.join(output_dir, os.path.basename(mapping_file))
+    else:
+        ips_file_path = ips_file
+        mapping_file_path = mapping_file
+    
+    scanner.save_ip_list(ips_file_path)
+    scanner.save_ip_mapping(mapping_file_path)
 
     # 统计
     status_count = {}
