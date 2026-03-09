@@ -1,0 +1,57 @@
+# .gitignore for src-recon-skill
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Output directories
+recon/
+results/
+output/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Sensitive data
+.env
+*.key
+*_secret.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
