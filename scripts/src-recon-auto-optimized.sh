@@ -512,8 +512,118 @@ else
     echo -e "${YELLOW}[*] 无路径爆破结果，跳过智能分析${NC}"
 fi
 
-# 阶段 9: 最终报告生成
-echo -e "\n${YELLOW}[*] 阶段 9: 生成最终报告${NC}"
+# ============================================
+# 阶段 9: API 参数测试
+# ============================================
+echo -e "\n${BLUE}========================================${NC}"
+echo -e "${BLUE}[*] 阶段 9: API 参数测试${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+# 检查 jsfind_results 目录
+if [ -d "${OUTPUT_DIR}/jsfind_results" ] && [ -f "${OUTPUT_DIR}/stage4/js_urls.txt" ]; then
+    echo "[*] 检测到可访问的 URL 和 JS 分析结果"
+    echo "[*] 开始 API 参数测试..."
+    
+    # 检查 api_endpoints.txt 是否有内容
+    API_COUNT=$(wc -l < "${OUTPUT_DIR}/jsfind_results/api_endpoints.txt" 2>/dev/null || echo "0")
+    
+    if [ "$API_COUNT" -gt 0 ]; then
+        echo "[*] 发现 $API_COUNT 个 API 端点，开始测试..."
+        
+        cd "$PROJECT_ROOT"
+        
+        # 运行 API 参数测试工具
+        python3 core/api_parameter_tester.py \
+            "$TARGET" \
+            "${OUTPUT_DIR}/jsfind_results" \
+            2>&1 | tee "${OUTPUT_DIR}/stage9/api_parameter_test_output.txt"
+        
+        # 移动报告到输出目录
+        if ls api_parameter_test_report_*.md 1> /dev/null 2>&1; then
+            mv api_parameter_test_report_*.md "${OUTPUT_DIR}/stage9/" 2>/dev/null || true
+            echo -e "${GREEN}[+] API 参数测试报告已生成${NC}"
+            
+            # 显示高风险问题数量
+            HIGH_RISK_API=$(grep -c "🔴 高风险问题" "${OUTPUT_DIR}"/stage9/api_parameter_test_report_*.md 2>/dev/null || echo "0")
+            if [ "$HIGH_RISK_API" -gt 0 ]; then
+                echo -e "${YELLOW}[!] 发现 $HIGH_RISK_API 个 API 参数测试高风险问题${NC}"
+            fi
+        fi
+        
+        cd - > /dev/null || true
+    else
+        echo "[*] 未发现 API 端点，跳过 API 参数测试"
+    fi
+else
+    echo -e "${YELLOW}[*] 缺少 JS 分析结果，跳过 API 参数测试${NC}"
+fi
+
+# ============================================
+# 阶段 10: 智能漏洞分析
+# ============================================
+echo -e "\n${BLUE}========================================${NC}"
+echo -e "${BLUE}[*] 阶段 10: 智能漏洞分析${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+if [ -f "${OUTPUT_DIR}/stage4/path_bruteforce_combined.txt" ]; then
+    echo "[*] 整合所有扫描结果进行智能分析"
+    
+    cd "$PROJECT_ROOT"
+    
+    # 加载路径爆破结果
+    python3 -c "
+import json
+from pathlib import Path
+
+output_dir = Path('${OUTPUT_DIR}')
+results = []
+
+if (output_dir / 'stage4/path_bruteforce_combined.txt').exists():
+    with open(output_dir / 'stage4/path_bruteforce_combined.txt', 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('- [200]'):
+                parts = line.split()
+                url = parts[1] if len(parts) > 1 else ''
+                size = int(parts[3].replace('bytes', '').strip()) if len(parts) > 3 else 0
+                results.append({'url': url, 'status': 200, 'size': size, 'accessible': True})
+            elif line.startswith('- [403]'):
+                parts = line.split()
+                url = parts[1] if len(parts) > 1 else ''
+                results.append({'url': url, 'status': 403, 'accessible': False})
+
+with open(output_dir / 'all_scan_results.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+print(f'[+] 整合了 {len(results)} 个扫描结果')
+"
+    
+    # 加载 API 参数测试结果
+    if [ -f "${OUTPUT_DIR}/stage9/api_parameter_test_report_*.md" ]; then
+        echo "[*] 包含 API 参数测试结果"
+    fi
+    
+    # 运行智能漏洞分析
+    if [ -f "${OUTPUT_DIR}/all_scan_results.json" ]; then
+        python3 core/vulnerability_analyzer.py \
+            "${OUTPUT_DIR}/all_scan_results.json" \
+            "${OUTPUT_DIR}/vulnerability_analysis.txt" 2>/dev/null || true
+    fi
+    
+    if [ -f "${OUTPUT_DIR}/vulnerability_analysis.txt" ]; then
+        HIGH_RISK=$(grep -c "^### " "${OUTPUT_DIR}/vulnerability_analysis.txt" 2>/dev/null || echo "0")
+        echo -e "${GREEN}[+] 发现 $HIGH_RISK 个高风险问题${NC}"
+    fi
+    
+    cd - > /dev/null || true
+else
+    echo -e "${YELLOW}[*] 无路径爆破结果，跳过智能分析${NC}"
+fi
+
+# ============================================
+# 阶段 11: 最终报告生成
+# ============================================
+echo -e "\n${YELLOW}[*] 阶段 11: 生成最终报告${NC}"
 
 # 统计
 SUB_COUNT=$(wc -l < "${OUTPUT_DIR}/stage1/all_subs_unique.txt" 2>/dev/null || echo "0")
@@ -524,6 +634,11 @@ PORT_COUNT=$(grep -c "open" "${OUTPUT_DIR}/stage3/port_scan.gnmap" 2>/dev/null |
 API_ENDPOINTS_COUNT=$(wc -l < "${OUTPUT_DIR}/jsfind_results/api_endpoints.txt" 2>/dev/null || echo "0")
 PATHS_COUNT=$(wc -l < "${OUTPUT_DIR}/jsfind_results/paths.txt" 2>/dev/null || echo "0")
 SECRETS_COUNT=$(wc -l < "${OUTPUT_DIR}/jsfind_results/secrets.txt" 2>/dev/null || echo "0")
+
+# API 参数测试统计
+API_TEST_TOTAL=$(grep -c "总测试数" "${OUTPUT_DIR}"/stage9/api_parameter_test_report_*.md 2>/dev/null || echo "0")
+API_TEST_HIGH=$(grep -c "🔴 高风险问题" "${OUTPUT_DIR}"/stage9/api_parameter_test_report_*.md 2>/dev/null || echo "0")
+API_TEST_MEDIUM=$(grep -c "🟡 中风险问题" "${OUTPUT_DIR}"/stage9/api_parameter_test_report_*.md 2>/dev/null || echo "0")
 
 VUE_DETECTED="否"
 if grep -q "Vue.js 检测.*是" "${OUTPUT_DIR}/vuecrack_report.txt" 2>/dev/null || true; then
@@ -587,6 +702,14 @@ cat > "$REPORT_FILE" << EOF
 
 ### 测试 URL: $BRUTEFORCE_COUNT 个
 ### 可访问: $BRUTEFORCE_ACCESSIBLE 个
+
+---
+
+## 🧪 API 参数测试结果
+
+### 总测试数: $API_TEST_TOTAL 个
+### 高风险问题: $API_TEST_HIGH 个
+### 中风险问题: $API_TEST_MEDIUM 个
 
 ---
 
