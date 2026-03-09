@@ -48,7 +48,7 @@ if command -v python3 &> /dev/null; then
             SUB_COUNT=$(wc -l < "${OUTPUT_DIR}/all_subs.txt" 2>/dev/null || echo "0")
             echo -e "${GREEN}[+] FOFA 发现 $SUB_COUNT 个子域名${NC}"
         fi
-        cd - > /dev/null
+        cd - > /dev/null || true
     else
         echo -e "${YELLOW}[*] FOFA API 未配置，跳过${NC}"
     fi
@@ -69,13 +69,13 @@ if [ -f "${OUTPUT_DIR}/all_subs.txt" ] && command -v python3 &> /dev/null; then
         HTTP_COUNT=$(wc -l < "${OUTPUT_DIR}/http_urls.txt" 2>/dev/null || echo "0")
         echo -e "${GREEN}[+] 发现 $HTTP_COUNT 个 HTTP 服务${NC}"
     fi
-    cd - > /dev/null
+    cd - > /dev/null || true
 else
     echo -e "${YELLOW}[*] 无子域名列表，跳过 HTTP 扫描${NC}"
 fi
 
 # 3. 端口扫描
-echo -e "\n${YELLOW}[*] 阶段 3: 端口扫描${NC}"
+echo -e "\n${YELLOW}[*] 阶段 3: 瓶口扫描${NC}"
 if [ -f "${OUTPUT_DIR}/resolved_ips.txt" ]; then
     SCAN_MODE="${SCAN_MODE:-fast}"
     echo "[*] 扫描模式: $SCAN_MODE"
@@ -100,6 +100,7 @@ echo -e "\n${YELLOW}[*] 生成报告${NC}"
 # 统计
 SUB_COUNT=$(wc -l < "${OUTPUT_DIR}/all_subs.txt" 2>/dev/null || echo "0")
 HTTP_COUNT=$(wc -l < "${OUTPUT_DIR}/http_urls.txt" 2>/dev/null || echo "0")
+PORT_COUNT=$(grep -c "open" "${OUTPUT_DIR}/port_scan.gnmap" 2>/dev/null || echo "0")
 
 cat > "$REPORT_FILE" << EOFREPORT
 # SRC 信息收集报告
@@ -116,6 +117,7 @@ cat > "$REPORT_FILE" << EOFREPORT
 |------|------|
 | 子域名 | $SUB_COUNT |
 | HTTP 服务 | $HTTP_COUNT |
+| 开放端口 | $PORT_COUNT |
 
 ---
 
@@ -126,6 +128,7 @@ cat > "$REPORT_FILE" << EOFREPORT
 - http_urls.txt - HTTP URL 列表
 - resolved_ips.txt - IP 地址列表
 - port_scan.gnmap - 端口扫描结果
+- connection_improvement.txt - 连接改进报告
 
 ---
 
