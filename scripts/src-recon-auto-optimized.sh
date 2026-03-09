@@ -291,19 +291,36 @@ echo -e "\n${YELLOW}[*] 阶段 4: JS 文件分析${NC}"
 if [ -f "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ]; then
     echo "[*] 分析可访问的 HTTP 服务"
     
+    # 创建 jsfind 结果目录
+    mkdir -p "${OUTPUT_DIR}/jsfind_results"
+    
+    # 创建临时 URL 文件
+    > "${OUTPUT_DIR}/stage4/js_urls.txt"
+    
     cd "$PROJECT_ROOT"
     for url in $(cat "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" 2>/dev/null | head -20); do
-        echo "    [*] 分析: $url"
+        echo "    [*] 检查: $url"
         
         STATUS=$(curl -Isk "$url" 2>/dev/null | grep "HTTP/" | awk '{print $2}' | head -1)
         
         if [ "$STATUS" = "200" ]; then
-            python3 core/jsfind.py "$url" 2>/dev/null || true
+            echo "$url" >> "${OUTPUT_DIR}/stage4/js_urls.txt"
         fi
     done
     
-    if ls ${OUTPUT_DIR}/jsfind_results/api_endpoints.txt 2>/dev/null; then
-        API_COUNT=$(wc -l < ${OUTPUT_DIR}/jsfind_results/api_endpoints.txt 2>/dev/null || echo "0")
+    # 检查是否有需要分析的 URL
+    if [ -s "${OUTPUT_DIR}/stage4/js_urls.txt" ]; then
+        URL_COUNT=$(wc -l < "${OUTPUT_DIR}/stage4/js_urls.txt" 2>/dev/null || echo "0")
+        echo "[*] 分析 $URL_COUNT 个 200 OK 的 URL"
+        
+        # 使用 jsfind 分析
+        python3 core/jsfind.py "${OUTPUT_DIR}/stage4/js_urls.txt" "${OUTPUT_DIR}/jsfind_results" 2>/dev/null || true
+    else
+        echo "[*] 无 200 OK 的 URL，跳过 JS 分析"
+    fi
+    
+    if [ -f "${OUTPUT_DIR}/jsfind_results/api_endpoints.txt" ]; then
+        API_COUNT=$(wc -l < "${OUTPUT_DIR}/jsfind_results/api_endpoints.txt" 2>/dev/null || echo "0")
         echo -e "${GREEN}[+] 发现 $API_COUNT 个 API 端点${NC}"
     fi
     
@@ -314,17 +331,29 @@ fi
 
 # 阶段 5: Vue.js 检测
 echo -e "\n${YELLOW}[*] 阶段 5: Vue.js 应用检测${NC}"
-if [ -f "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ]; then
+if [ -f "${OUTPUT_DIR}/stage4/js_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage4/js_urls.txt" ]; then
     echo "[*] 检测 Vue.js 应用"
     
+    > "${OUTPUT_DIR}/stage4/vuecrack_results.txt"
+    
     cd "$PROJECT_ROOT"
-    for url in $(cat "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" 2>/dev/null | head -20); do
+    for url in $(cat "${OUTPUT_DIR}/stage4/js_urls.txt" 2>/dev/null | head -20); do
+        echo "    [*] 检测: $url"
+        
         STATUS=$(curl -Isk "$url" 2>/dev/null | grep "HTTP/" | awk '{print $2}' | head -1)
         
         if [ "$STATUS" = "200" ]; then
-            python3 core/vuecrack.py "$url" 2>/dev/null || true
+            python3 core/vuecrack.py "$url" "${OUTPUT_DIR}/stage4/vuecrack_$(basename $url | tr -d '.').txt" 2>/dev/null || true
         fi
     done
+    
+    # 合并结果
+    cat ${OUTPUT_DIR}/stage4/vuecrack_*.txt 2>/dev/null | grep -v "^$" > "${OUTPUT_DIR}/stage4/vuecrack_combined.txt" || true
+    
+    if [ -f "${OUTPUT_DIR}/stage4/vuecrack_combined.txt" ] && [ -s "${OUTPUT_DIR}/stage4/vuecrack_combined.txt" ]; then
+        VUE_COUNT=$(grep -c "Vue.js" "${OUTPUT_DIR}/stage4/vuecrack_combined.txt" 2>/dev/null || echo "0")
+        echo -e "${GREEN}[+] 检测到 $VUE_COUNT 个 Vue.js 应用${NC}"
+    fi
     
     cd - > /dev/null || true
 else
@@ -333,17 +362,29 @@ fi
 
 # 阶段 6: Actuator 检测
 echo -e "\n${YELLOW}[*] 阶段 6: Spring Boot Actuator 检测${NC}"
-if [ -f "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ]; then
+if [ -f "${OUTPUT_DIR}/stage4/js_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage4/js_urls.txt" ]; then
     echo "[*] 检测 Spring Boot Actuator"
     
+    > "${OUTPUT_DIR}/stage4/actuator_results.txt"
+    
     cd "$PROJECT_ROOT"
-    for url in $(cat "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" 2>/dev/null | head -20); do
+    for url in $(cat "${OUTPUT_DIR}/stage4/js_urls.txt" 2>/dev/null | head -20); do
+        echo "    [*] 检测: $url"
+        
         STATUS=$(curl -Isk "$url" 2>/dev/null | grep "HTTP/" | awk '{print $2}' | head -1)
         
         if [ "$STATUS" = "200" ]; then
-            python3 core/actuator_scanner.py "$url" 2>/dev/null || true
+            python3 core/actuator_scanner.py "$url" "${OUTPUT_DIR}/stage4/actuator_$(basename $url | tr -d '.').txt" 2>/dev/null || true
         fi
     done
+    
+    # 合并结果
+    cat ${OUTPUT_DIR}/stage4/actuator_*.txt 2>/dev/null | grep -v "^$" > "${OUTPUT_DIR}/stage4/actuator_combined.txt" || true
+    
+    if [ -f "${OUTPUT_DIR}/stage4/actuator_combined.txt" ] && [ -s "${OUTPUT_DIR}/stage4/actuator_combined.txt" ]; then
+        ACTUATOR_COUNT=$(grep -c "Actuator" "${OUTPUT_DIR}/stage4/actuator_combined.txt" 2>/dev/null || echo "0")
+        echo -e "${GREEN}[+] 检测到 $ACTUATOR_COUNT 个 Actuator 端点${NC}"
+    fi
     
     cd - > /dev/null || true
 else
@@ -352,33 +393,68 @@ fi
 
 # 阶段 7: 路径爆破测试
 echo -e "\n${YELLOW}[*] 阶段 7: 路径爆破测试${NC}"
-if [ -f "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" ]; then
+if [ -f "${OUTPUT_DIR}/stage4/js_urls.txt" ] && [ -s "${OUTPUT_DIR}/stage4/js_urls.txt" ]; then
     echo "[*] 路径拼接与爆破测试"
     
+    # 检查是否有提取的路径
+    EXTRACTED_PATHS="${OUTPUT_DIR}/stage4/extracted_paths.txt"
+    > "${EXTRACTED_PATHS}"
+    
     if [ -f "${OUTPUT_DIR}/jsfind_results/paths.txt" ]; then
-        cp "${OUTPUT_DIR}/jsfind_results/paths.txt" "${OUTPUT_DIR}/stage4/extracted_paths.txt"
-        PATH_COUNT=$(wc -l < "${OUTPUT_DIR}/stage4/extracted_paths.txt" 2>/dev/null || echo "0")
-        echo "    [*] 提取 $PATH_COUNT 个路径"
+        cp "${OUTPUT_DIR}/jsfind_results/paths.txt" "${EXTRACTED_PATHS}"
+        PATH_COUNT=$(wc -l < "${EXTRACTED_PATHS}" 2>/dev/null || echo "0")
+        echo "    [*] 从 JS 文件提取 $PATH_COUNT 个路径"
     fi
     
+    # 添加常见管理路径
+    cat >> "${EXTRACTED_PATHS}" << 'EOF'
+/admin
+/admin/login
+/admin/dashboard
+/api
+/api/v1
+/api/v2
+/config
+/settings
+/management
+/console
+/control
+/actuator
+/actuator/health
+/actuator/env
+/env
+/health
+/info
+/beans
+/mappings
+/heapdump
+/threaddump
+EOF
+    
+    TOTAL_PATHS=$(wc -l < "${EXTRACTED_PATHS}" 2>/dev/null || echo "0")
+    echo "    [*] 总计 $TOTAL_PATHS 个路径待测试"
+    
     cd "$PROJECT_ROOT"
-    for url in $(cat "${OUTPUT_DIR}/stage2/http_accessible_urls.txt" 2>/dev/null | head -10); do
+    for url in $(cat "${OUTPUT_DIR}/stage4/js_urls.txt" 2>/dev/null | head -10); do
         echo "    [*] 测试: $url"
         
         STATUS=$(curl -Isk "$url" 2>/dev/null | grep "HTTP/" | awk '{print $2}' | head -1)
         
         if [ "$STATUS" = "200" ] || [ "$STATUS" = "403" ]; then
             python3 core/path_bruteforcer.py "$url" \
-                "${OUTPUT_DIR}/stage4/extracted_paths.txt" \
+                "${EXTRACTED_PATHS}" \
                 "${OUTPUT_DIR}/stage4/path_bruteforce_$(basename $url | tr -d '.').txt" 2>/dev/null || true
         fi
     done
     
+    # 合并结果
     cat ${OUTPUT_DIR}/stage4/path_bruteforce_*.txt 2>/dev/null | grep -v "^$" > "${OUTPUT_DIR}/stage4/path_bruteforce_combined.txt" || true
     
-    if [ -f "${OUTPUT_DIR}/stage4/path_bruteforce_combined.txt" ]; then
+    if [ -f "${OUTPUT_DIR}/stage4/path_bruteforce_combined.txt" ] && [ -s "${OUTPUT_DIR}/stage4/path_bruteforce_combined.txt" ]; then
         ACCESSIBLE_COUNT=$(grep -c "^- \[200\]" "${OUTPUT_DIR}/stage4/path_bruteforce_combined.txt" 2>/dev/null || echo "0")
-        echo -e "${GREEN}[+] 发现 $ACCESSIBLE_COUNT 个可访问 URL${NC}"
+        echo -e "${GREEN}[+] 发现 $ACCESSIBLE_COUNT 个可访问路径${NC}"
+    else
+        echo "[*] 路径爆破未发现可访问路径"
     fi
     
     cd - > /dev/null || true
@@ -559,3 +635,17 @@ if [ "$VULN_HIGH" ] && [ "$VULN_HIGH" -gt 0 ]; then
     echo -e "${RED}[!] 发现 $VULN_HIGH 个高风险问题，请优先验证${NC}"
     echo "    建议: cat ${OUTPUT_DIR}/vulnerability_analysis.txt | grep '^###' | head -10"
 fi
+
+# ============================================
+# 生成统一报告
+# ============================================
+echo -e "\n${BLUE}========================================${NC}"
+echo -e "${BLUE}[*] 生成统一分析报告${NC}"
+echo -e "${BLUE}========================================${NC}"
+
+if [ -f "${PROJECT_ROOT}/utils/generate_report.sh" ]; then
+    bash "${PROJECT_ROOT}/utils/generate_report.sh" "$OUTPUT_DIR" "$TARGET" "full_stage"
+else
+    echo -e "${YELLOW}[!] 统一报告生成器未找到，跳过${NC}"
+fi
+
