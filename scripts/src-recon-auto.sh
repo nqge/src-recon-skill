@@ -1,5 +1,5 @@
 #!/bin/bash
-# SRC 自动化信息收集脚本（完整版）
+# SRC 自动化信息收集脚本（改进版）
 # 使用方法: ./scripts/src-recon-auto.sh example.com
 
 set -e
@@ -18,6 +18,7 @@ REPORT_FILE="${OUTPUT_DIR}/report_${TIMESTAMP}.md"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # 检查参数
@@ -55,7 +56,7 @@ if command -v python3 &> /dev/null; then
 fi
 
 # ============================================
-# 阶段 2: HTTP/HTTPS 服务扫描
+# 阶段 2: HTTP/HTTPS 服务扫描（改进版）
 # ============================================
 echo -e "\n${YELLOW}[*] 阶段 2: HTTP/HTTPS 服务扫描${NC}"
 if [ -f "${OUTPUT_DIR}/all_subs.txt" ] && command -v python3 &> /dev/null; then
@@ -63,19 +64,40 @@ if [ -f "${OUTPUT_DIR}/all_subs.txt" ] && command -v python3 &> /dev/null; then
     cd "$PROJECT_ROOT"
     python3 core/http_scanner_enhanced.py "${OUTPUT_DIR}/all_subs.txt" "${OUTPUT_DIR}/http_services.txt"
     
-    # 提取 URL
+    # 提取可访问的 URL（200, 3xx, 403）
     if [ -f "${OUTPUT_DIR}/http_services.txt" ]; then
         grep -E "^\[200\]|^\[30[0-9]\]|^\[403\]" "${OUTPUT_DIR}/http_services.txt" | awk '{print $2}' > "${OUTPUT_DIR}/http_urls.txt" 2>/dev/null || true
         HTTP_COUNT=$(wc -l < "${OUTPUT_DIR}/http_urls.txt" 2>/dev/null || echo "0")
         echo -e "${GREEN}[+] 发现 $HTTP_COUNT 个 HTTP 服务${NC}"
     fi
+    
+    # 🔥 新增：对连接错误和 SSL 错误的 URL 进行连接改进
+    ERROR_URLS_FILE="${OUTPUT_DIR}/error_urls.txt"
+    if [ -f "${OUTPUT_DIR}/http_services.txt" ]; then
+        # 提取有错误的 URL
+        grep "\[ERROR\]" "${OUTPUT_DIR}/http_services.txt" | awk '{print $2}' > "$ERROR_URLS_FILE" 2>/dev/null || true
+        ERROR_COUNT=$(wc -l < "$ERROR_URLS_FILE" 2>/dev/null || echo "0")
+        
+        if [ "$ERROR_COUNT" -gt 0 ]; then
+            echo -e "${BLUE}[*] 发现 $ERROR_COUNT 个有错误的 URL，尝试连接改进...${NC}"
+            
+            # 运行连接改进工具
+            python3 core/connection_improver.py "${OUTPUT_DIR}/http_services.txt" "${OUTPUT_DIR}/connection_improvement.txt" 2>/dev/null || true
+            
+            # 检查改进后是否有新的可访问 URL
+            if grep -q "建议方案" "${OUTPUT_DIR}/connection_improvement.txt" 2>/dev/null; then
+                echo -e "${GREEN}[+] 连接改进建议已生成${NC}"
+            fi
+        fi
+    fi
+    
     cd - > /dev/null || true
 else
     echo -e "${YELLOW}[*] 无子域名列表，跳过 HTTP 扫描${NC}"
 fi
 
 # ============================================
-# 阶段 3: 端口扫描
+# 阶段 3: 端口扫描（改进版）
 # ============================================
 echo -e "\n${YELLOW}[*] 阶段 3: 端口扫描${NC}"
 if [ -f "${OUTPUT_DIR}/resolved_ips.txt" ]; then
@@ -90,15 +112,52 @@ if [ -f "${OUTPUT_DIR}/resolved_ips.txt" ]; then
         nmap -iL "${OUTPUT_DIR}/resolved_ips.txt" -p 80,443,8080,8443,3000,5000,8888,9000,9443 --top-ports 1000 -T4 --open -oG "${OUTPUT_DIR}/port_scan.gnmap" 2>/dev/null || true
     fi
     
+    # 🔥 新增：从端口扫描结果中提取 HTTP/HTTPS 服务
     if [ -f "${OUTPUT_DIR}/port_scan.gnmap" ]; then
         PORT_COUNT=$(grep -c "open" "${OUTPUT_DIR}/port_scan.gnmap" || echo "0")
         echo -e "${GREEN}[+] 发现 $PORT_COUNT 个开放端口${NC}"
+        
+        # 提取开放 80/443/8080/8443 端口的 IP
+        grep -E "80/tcp|443/tcp|8080/tcp|8443/tcp" "${OUTPUT_DIR}/port_scan.gnmap" | grep "open" | awk '{print $2}' > "${OUTPUT_DIR}/web_ips.txt" 2>/dev/null || true
+        
+        WEB_IP_COUNT=$(wc -l < "${OUTPUT_DIR}/web_ips.txt" 2>/dev/null || echo "0")
+        
+        if [ "$WEB_IP_COUNT" -gt 0 ]; then
+            echo -e "${BLUE}[*] 发现 $WEB_IP_COUNT 个 Web 服务 IP，生成 URL 列表...${NC}"
+            
+            # 为每个 IP 生成 HTTP/HTTPS URL
+            > "${OUTPUT_DIR}/port_http_urls.txt"  # 清空文件
+            while IFS= read -r ip; do
+                echo "http://$ip" >> "${OUTPUT_DIR}/port_http_urls.txt"
+                echo "https://$ip" >> "${OUTPUT_DIR}/port_http_urls.txt"
+            done < "${OUTPUT_DIR}/web_ips.txt"
+            
+            # 🔥 新增：对新发现的端口 URL 进行 HTTP 扫描
+            echo -e "${BLUE}[*] 扫描新发现的 Web 服务...${NC}"
+            cd "$PROJECT_ROOT"
+            python3 core/http_scanner_enhanced.py "${OUTPUT_DIR}/port_http_urls.txt" "${OUTPUT_DIR}/port_http_services.txt"
+            
+            # 合并新的可访问 URL 到主列表
+            if [ -f "${OUTPUT_DIR}/port_http_services.txt" ]; then
+                grep -E "^\[200\]|^\[30[0-9]\]|^\[403\]" "${OUTPUT_DIR}/port_http_services.txt" | awk '{print $2}' >> "${OUTPUT_DIR}/http_urls.txt" 2>/dev/null || true
+                
+                # 去重
+                sort -u "${OUTPUT_DIR}/http_urls.txt" -o "${OUTPUT_DIR}/http_urls.txt"
+                
+                NEW_HTTP_COUNT=$(wc -l < "${OUTPUT_DIR}/http_urls.txt" 2>/dev/null || echo "0")
+                echo -e "${GREEN}[+] 更新后可访问的 HTTP 服务: $NEW_HTTP_COUNT${NC}"
+            fi
+            
+            cd - > /dev/null || true
+        fi
     fi
 fi
 
 # ============================================
-# 阶段 4: JS 文件分析
+# 阶段 4-9: 深度分析（使用更新后的 URL 列表）
 # ============================================
+
+# 阶段 4: JS 文件分析
 echo -e "\n${YELLOW}[*] 阶段 4: JS 文件分析${NC}"
 if [ -f "${OUTPUT_DIR}/http_urls.txt" ] && [ -s "${OUTPUT_DIR}/http_urls.txt" ] && command -v python3 &> /dev/null; then
     echo "[*] 分析可访问的 HTTP 服务"
@@ -124,9 +183,7 @@ else
     echo -e "${YELLOW}[*] 无可访问的 HTTP 服务，跳过 JS 分析${NC}"
 fi
 
-# ============================================
 # 阶段 5: Vue.js 检测
-# ============================================
 echo -e "\n${YELLOW}[*] 阶段 5: Vue.js 应用检测${NC}"
 if [ -f "${OUTPUT_DIR}/http_urls.txt" ] && [ -s "${OUTPUT_DIR}/http_urls.txt" ] && command -v python3 &> /dev/null; then
     echo "[*] 检测 Vue.js 应用"
@@ -145,9 +202,7 @@ else
     echo -e "${YELLOW}[*] 无可访问的 HTTP 服务，跳过 Vue.js 检测${NC}"
 fi
 
-# ============================================
 # 阶段 6: Actuator 检测
-# ============================================
 echo -e "\n${YELLOW}[*] 阶段 6: Spring Boot Actuator 检测${NC}"
 if [ -f "${OUTPUT_DIR}/http_urls.txt" ] && [ -s "${OUTPUT_DIR}/http_urls.txt" ] && command -v python3 &> /dev/null; then
     echo "[*] 检测 Spring Boot Actuator"
@@ -166,9 +221,7 @@ else
     echo -e "${YELLOW}[*] 无可访问的 HTTP 服务，跳过 Actuator 检测${NC}"
 fi
 
-# ============================================
 # 阶段 7: 路径爆破测试
-# ============================================
 echo -e "\n${YELLOW}[*] 阶段 7: 路径爆破测试${NC}"
 if [ -f "${OUTPUT_DIR}/http_urls.txt" ] && [ -s "${OUTPUT_DIR}/http_urls.txt" ] && command -v python3 &> /dev/null; then
     echo "[*] 路径拼接与爆破测试"
@@ -202,9 +255,7 @@ else
     echo -e "${YELLOW}[*] 无可访问的 HTTP 服务，跳过路径爆破${NC}"
 fi
 
-# ============================================
 # 阶段 8: 智能漏洞分析
-# ============================================
 echo -e "\n${YELLOW}[*] 阶段 8: 智能漏洞分析${NC}"
 if [ -f "${OUTPUT_DIR}/path_bruteforce_combined.txt" ] && command -v python3 &> /dev/null; then
     echo "[*] 智能漏洞分析"
@@ -250,9 +301,7 @@ else
     echo -e "${YELLOW}[*] 无路径爆破结果，跳过智能分析${NC}"
 fi
 
-# ============================================
 # 阶段 9: 最终报告生成
-# ============================================
 echo -e "\n${YELLOW}[*] 阶段 9: 生成最终报告${NC}"
 
 # 统计
@@ -342,6 +391,11 @@ cat > "$REPORT_FILE" << EOF
 - **http_services.txt** - HTTP 服务扫描结果
 - **http_urls.txt** - HTTP URL 列表
 - **resolved_ips.txt** - IP 地址列表
+- **port_http_urls.txt** - 端口扫描发现的 URL
+- **port_http_services.txt** - 端口扫描服务扫描结果
+
+### 连接改进
+- **connection_improvement.txt** - 连接改进建议
 
 ### JS 分析
 - **jsfind_results/** - JS 分析结果目录
