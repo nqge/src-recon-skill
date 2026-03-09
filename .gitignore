@@ -48,6 +48,9 @@ output/
 .env
 *.key
 *_secret.txt
+auth.json
+auth_session.json
+*.cookie
 
 # OS
 .DS_Store
@@ -55,3 +58,15 @@ Thumbs.db
 
 # Git
 .git/
+
+# OneForAll results
+OneForAll/
+results/
+
+# Tool output
+fofa_subs.txt
+http_services.txt
+all_subs.txt
+resolved_ips.txt
+domain_ip_mapping.json
+
